@@ -1,184 +1,256 @@
 # Dependent Pitman-Yor Process Mixture
 
-This project studies a Bayesian nonparametric mixture model for two related
-populations. The goal is to estimate two possibly different densities while still
-allowing them to share latent structure. This is useful when groups are not
-identical, but are expected to have related clustering behavior.
+This project studies a Bayesian nonparametric mixture for two related populations. The objective is to estimate two unknown distributions while allowing them to share latent clustering structure. Dependence is introduced both in the mixture weights and in the mixture atoms.
 
-The model is based on a dependent Pitman-Yor process with a beta-product
-dependent stick-breaking construction. The implementation focuses on the
-symmetric H1 specification described in Bassetti, Casarin, and Leisen (2014),
-combined with an ANOVA-style hierarchical structure for the mixture atoms.
+## Model
 
-## Motivation
+For groups \(i=1,2\), observations are modeled as:
 
-Standard Dirichlet and Pitman-Yor process mixtures are powerful priors for
-unknown densities, but in their basic form they model one random distribution at
-a time. In grouped or repeated-measure settings, this is often too limited:
-each group may have its own distribution, but the groups should not be treated
-as completely unrelated.
+$$
+y_{ij}\mid z_{ij}=k \sim \mathcal{N}(\mu_{ik},\sigma_{ik}^{2})
+$$
 
-The dependent construction used here addresses this by defining two random
-distributions, `G1` and `G2`, whose mixture weights and atom locations are
-correlated. This induces borrowing of strength between groups while preserving
-group-specific heterogeneity.
+$$
+\Pr(z_{ij}=k)=\pi_{ik}
+$$
 
-## Dirichlet Process vs Pitman-Yor Process
+The random measure for group \(i\) is:
 
-The Pitman-Yor process generalizes the Dirichlet process by adding a discount
-parameter. In stick-breaking form, the random weights are generated from beta
-variables whose parameters depend on this discount.
+$$
+G_i=\sum_{k=1}^{\infty}\pi_{ik}\delta_{\psi_{ik}}.
+$$
 
-When the discount parameter is zero, the Pitman-Yor process reduces to the
-Dirichlet process. When the discount is positive, the model produces heavier
-tails in the cluster-size distribution. This is important when the data contain
-many small latent components, rare subpopulations, or long-tail behavior.
+Here, \(\pi_{ik}\) are random weights and \(\psi_{ik}\) are the atoms of the mixture.
 
-In practical terms:
+## Dependent Stick-Breaking
 
-- the Dirichlet process tends to produce a smaller number of dominant clusters;
-- the Pitman-Yor process can support more small clusters;
-- the Pitman-Yor process is better suited to power-law or heavy-tail structure.
+The model uses a beta-product dependent stick-breaking construction. In the symmetric \(H_1\) case:
 
-## Dependent Stick-Breaking Construction
+$$
+S_{1k}=V_{0k}V_{1k},
+\qquad
+S_{2k}=V_{0k}V_{2k}.
+$$
 
-For each group, the random distribution is represented as an infinite mixture:
+The variable \(V_{0k}\) is shared and induces dependence between the two groups. The weights are:
 
-```text
-Gi = sum_k Wik delta_{psi_ik}
-```
+$$
+\pi_{ik}
+=
+S_{ik}\prod_{\ell<k}(1-S_{i\ell}).
+$$
 
-The dependence between groups is introduced through the weights. In the H1
-construction, the stick-breaking terms are:
+Equivalently:
 
-```text
-S1k = V0k V1k
-S2k = V0k V2k
-```
+$$
+\pi_{1k}
+=
+V_{0k}V_{1k}
+\prod_{\ell<k}(1-V_{0\ell}V_{1\ell}),
+$$
 
-The variable `V0k` is shared across groups and acts as a common latent factor.
-The variables `V1k` and `V2k` are group-specific. This creates dependence
-between the weights `W1k` and `W2k`: if a component is important in one group,
-the model encourages the corresponding component to also be relevant in the
-other group.
+$$
+\pi_{2k}
+=
+V_{0k}V_{2k}
+\prod_{\ell<k}(1-V_{0\ell}V_{2\ell}).
+$$
 
-This is the first level of dependence in the model: shared complexity.
+The beta variables are:
 
-## ANOVA Structure for Atoms
+$$
+V_{0k}\sim \mathrm{Beta}(1-c,\theta_1)
+$$
 
-The second level of dependence concerns the atoms of the mixture. Each Gaussian
-kernel has group-specific parameters, but those parameters are built from common
-and group-specific components:
+$$
+V_{1k}\sim \mathrm{Beta}(1-c+\theta_1,\theta_2+c(k-1))
+$$
 
-```text
-mu_ik = mu_0k + mu_specific,ik
-sigma^2_ik = sigma^2_0k sigma^2_specific,ik
-```
+$$
+V_{2k}\sim \mathrm{Beta}(1-c+\theta_1,\theta_2+c(k-1)).
+$$
 
-The common component represents the baseline position and scale of the cluster.
-The group-specific component allows each population to deviate from that
-baseline.
+The parameter \(c\) is the Pitman-Yor discount:
 
-This ANOVA-style hierarchy makes the model interpretable:
+$$
+c=0
+\quad\Rightarrow\quad
+\text{dependent Dirichlet-process behavior},
+$$
 
-- common atoms capture structure shared by both groups;
-- specific atoms capture group-level shifts;
-- the prior controls how strongly clusters are aligned across groups.
+$$
+0<c<1
+\quad\Rightarrow\quad
+\text{Pitman-Yor behavior with heavier tails}.
+$$
 
-This is the second level of dependence: shared location.
+Thus, positive \(c\) allows more small active clusters and is better suited to long-tail data.
 
-## Inference
+## ANOVA Atom Structure
 
-The theoretical model has infinitely many mixture components. For computation,
-the process is approximated with a finite truncation level `K_max`. The final
-stick is closed so that the truncated weights sum to one.
+The atoms are decomposed into a shared component and a group-specific deviation:
 
-Posterior inference is performed by MCMC. The sampler alternates between:
+$$
+\mu_{ik}=\mu_{0k}+\mu_{ik}^{\ast}
+$$
 
-- updating cluster allocations for observations;
-- updating common and group-specific atom parameters;
-- updating dependent stick-breaking variables;
-- updating the hyperparameters controlling dependence and Pitman-Yor behavior.
+$$
+\sigma_{ik}^{2}=\sigma_{0k}^{2}\sigma_{ik}^{2\ast}.
+$$
 
-The atom updates use conjugate Normal-Inverse-Gamma steps. The stick-breaking
-variables and hyperparameters are updated with Metropolis-Hastings steps.
+The priors are:
+
+$$
+\mu_{0k}\sim \mathcal{N}(0,s_0^2),
+\qquad
+\mu_{ik}^{\ast}\sim \mathcal{N}(0,s_i^2)
+$$
+
+$$
+\sigma_{0k}^{2}\sim
+\mathrm{InvGamma}\left(\frac{\varepsilon}{2},\frac{\varepsilon}{2}\right),
+\qquad
+\sigma_{ik}^{2\ast}\sim
+\mathrm{InvGamma}\left(\frac{\lambda}{2},\frac{\lambda}{2}\right).
+$$
+
+This hierarchy separates common structure from group-specific variation. The shared atom \((\mu_{0k},\sigma_{0k}^2)\) aligns clusters across groups, while \((\mu_{ik}^{\ast},\sigma_{ik}^{2\ast})\) allows local deviations.
+
+## Posterior Allocation
+
+Given weights and atoms, the allocation probability is:
+
+$$
+\Pr(z_{ij}=k\mid -)
+\propto
+\pi_{ik}\,
+\mathcal{N}(y_{ij}\mid\mu_{ik},\sigma_{ik}^{2}).
+$$
+
+After normalization:
+
+$$
+\Pr(z_{ij}=k\mid -)
+=
+\frac{
+\pi_{ik}\mathcal{N}(y_{ij}\mid\mu_{ik},\sigma_{ik}^{2})
+}{
+\sum_{h=1}^{K}
+\pi_{ih}\mathcal{N}(y_{ij}\mid\mu_{ih},\sigma_{ih}^{2})
+}.
+$$
+
+The infinite mixture is approximated with a finite truncation level \(K\).
+
+## Posterior Updates
+
+Conditional on allocations, atom parameters have conjugate Normal-Inverse-Gamma updates. For the group-specific mean:
+
+$$
+\mu_{ik}^{\ast}\mid -
+\sim
+\mathcal{N}(m_{ik},V_{ik})
+$$
+
+with:
+
+$$
+V_{ik}^{-1}
+=
+\frac{1}{s_i^2}
++
+\frac{n_{ik}}{\sigma_{0k}^{2}\sigma_{ik}^{2\ast}},
+$$
+
+$$
+m_{ik}
+=
+V_{ik}
+\frac{
+\sum_{j:z_{ij}=k}(y_{ij}-\mu_{0k})
+}{
+\sigma_{0k}^{2}\sigma_{ik}^{2\ast}
+}.
+$$
+
+The common mean uses observations from both groups:
+
+$$
+\mu_{0k}\mid -
+\sim
+\mathcal{N}(m_{0k},V_{0k})
+$$
+
+with:
+
+$$
+V_{0k}^{-1}
+=
+\frac{1}{s_0^2}
++
+\frac{n_{1k}}{\sigma_{0k}^{2}\sigma_{1k}^{2\ast}}
++
+\frac{n_{2k}}{\sigma_{0k}^{2}\sigma_{2k}^{2\ast}}.
+$$
+
+This is the main borrowing-of-strength mechanism for the atoms.
+
+## Stick And Hyperparameter Updates
+
+The stick variables are updated with Metropolis-Hastings proposals on the logit scale:
+
+$$
+\mathrm{logit}(V_k^{new})
+=
+\mathrm{logit}(V_k^{old})+\eta,
+\qquad
+\eta\sim\mathcal{N}(0,\tau^2).
+$$
+
+The acceptance probability is:
+
+$$
+\alpha
+=
+\min\left\{
+1,
+\frac{
+p(V^{new}\mid z,\theta_1,\theta_2,c)
+}{
+p(V^{old}\mid z,\theta_1,\theta_2,c)
+}
+\frac{
+J(V^{new})
+}{
+J(V^{old})
+}
+\right\}.
+$$
+
+The hyperparameters \(\theta_1\) and \(\theta_2\) control concentration of the stick-breaking weights. The discount \(c\) controls the departure from Dirichlet-process behavior and determines how strongly the model supports small clusters.
 
 ## Interpretation
 
-The model separates two related ideas that are often conflated:
+The model captures two kinds of dependence.
 
-- whether the groups use the same number and importance of latent components;
-- whether those components are located in the same places.
+First, dependence in cluster importance:
 
-The dependent weights answer the first question. If posterior weights for the
-same component index are highly correlated across groups, this suggests that the
-groups share latent complexity.
+$$
+\pi_{1k}\approx \pi_{2k}
+$$
 
-The ANOVA atom structure answers the second question. If posterior component
-means and variances are similar across groups, this suggests that the groups
-share not only complexity, but also physical cluster location.
+means that component \(k\) has similar relevance in both groups.
 
-Together, these two mechanisms allow the model to represent:
+Second, dependence in cluster location:
 
-- nearly identical group distributions;
-- distributions with shared clusters but shifted locations;
-- distributions with similar global complexity but different local behavior;
-- heavy-tail settings with many small components.
+$$
+\mu_{1k}\approx \mu_{2k},
+\qquad
+\sigma_{1k}^{2}\approx\sigma_{2k}^{2}
+$$
 
-## Simulation Study
+means that the same latent component appears in similar regions of the sample space.
 
-The project reproduces four synthetic mixture scenarios inspired by the
-reference paper. These scenarios test the ability of the model to recover:
+The dependent Pitman-Yor process is therefore able to represent shared clusters, shifted clusters, unequal weights, and heavy-tailed behavior with many small components.
 
-- balanced mixtures with common components;
-- mixtures with unequal weights across groups;
-- mixtures with shifted component locations;
-- mixtures with different numbers of active components across groups.
-
-Posterior mean density plots are used to assess density recovery. Scatter plots
-of posterior weights are used to inspect dependence between groups.
-
-## Real-Data Application
-
-The empirical example uses IBM credit-card transaction data. The model is applied
-to transaction amounts from two consecutive years, 2008 and 2009. This setting is
-natural for dependent random measures: spending behavior is expected to be
-correlated across adjacent years, but the distributions may still differ because
-of economic changes and individual spending variation.
-
-The model is especially relevant here because transaction amounts are
-multimodal, include refunds, and may contain rare high-value transactions. These
-features make a flexible nonparametric mixture more appropriate than a simple
-unimodal parametric model.
-
-## Practical Use
-
-The main report is `NP_Favagrossa.pdf`. The R implementation is
-`BNP_Favagrossa.R`.
-
-To load the model functions without running the full analysis:
-
-```r
-source("BNP_Favagrossa.R")
-```
-
-To run the complete set of simulations and applications:
-
-```sh
-RUN_FULL_ANALYSIS=true Rscript BNP_Favagrossa.R
-```
-
-Required R packages:
-
-```r
-install.packages(c("ggplot2", "gridExtra", "tidyverse"))
-```
-
-The real-data section expects the file:
-
-```text
-IBM Credit Data/User0_credit_card_transactions.csv
-```
-
-inside the project folder.
 
